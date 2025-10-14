@@ -96,28 +96,30 @@ jobs:
           echo "Repository: ${{ github.repository }}"
           echo "Repository owner: ${{ github.repository_owner }}"
           echo "Repository name: ${{ github.event.repository.name }}"
+          echo ""
+          echo "Contents of storybook-static directory:"
           ls -la storybook-static/
-          
-      - name: Determine destination directory
-        id: dest
-        run: |
-          BRANCH_NAME="${{ needs.check-stories.outputs.branch-name }}"
-          if [[ "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "main" ]]; then
-            echo "destination=." >> $GITHUB_OUTPUT
-            echo "Deploying to root directory"
+          echo ""
+          echo "Checking for index.html:"
+          if [ -f "storybook-static/index.html" ]; then
+            echo "✅ index.html found in storybook-static/"
+            echo "First few lines of index.html:"
+            head -n 10 storybook-static/index.html
           else
-            echo "destination=branches/$BRANCH_NAME" >> $GITHUB_OUTPUT
-            echo "Deploying to branches/$BRANCH_NAME directory"
+            echo "❌ index.html NOT found in storybook-static/"
           fi
-
+          echo ""
+          echo "Destination directory will be: ${{ needs.check-stories.outputs.branch-name == 'master' && '(root)' || format('branches/{0}', needs.check-stories.outputs.branch-name) }}"
+          
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: storybook-static
-          destination_dir: ${{ steps.dest.outputs.destination }}
+          destination_dir: ${{ needs.check-stories.outputs.branch-name == 'master' && '' || format('branches/{0}', needs.check-stories.outputs.branch-name) }}
           keep_files: true
           enable_jekyll: false
+          force_orphan: false
 
       - name: Get deployment URL
         id: get-url

@@ -90,13 +90,34 @@ jobs:
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
+      - name: Debug deployment info
+        run: |
+          echo "Branch name: ${{ needs.check-stories.outputs.branch-name }}"
+          echo "Repository: ${{ github.repository }}"
+          echo "Repository owner: ${{ github.repository_owner }}"
+          echo "Repository name: ${{ github.event.repository.name }}"
+          ls -la storybook-static/
+          
+      - name: Determine destination directory
+        id: dest
+        run: |
+          BRANCH_NAME="${{ needs.check-stories.outputs.branch-name }}"
+          if [[ "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "main" ]]; then
+            echo "destination=." >> $GITHUB_OUTPUT
+            echo "Deploying to root directory"
+          else
+            echo "destination=branches/$BRANCH_NAME" >> $GITHUB_OUTPUT
+            echo "Deploying to branches/$BRANCH_NAME directory"
+          fi
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: storybook-static
-          destination_dir: ${{ needs.check-stories.outputs.branch-name == 'master' && '.' || format('branches/{0}', needs.check-stories.outputs.branch-name) }}
+          destination_dir: ${{ steps.dest.outputs.destination }}
           keep_files: true
+          enable_jekyll: false
 
       - name: Get deployment URL
         id: get-url

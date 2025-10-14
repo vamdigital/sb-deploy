@@ -15,7 +15,7 @@ on:
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
-  contents: read
+  contents: write  # Changed to write to allow git push
   pages: write
   id-token: write
   pull-requests: write
@@ -67,6 +67,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history for gh-pages branch
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -90,11 +93,18 @@ jobs:
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
+      - name: Preserve Storybook build
+        run: |
+          # Copy storybook build to a temporary location to preserve it during branch switch
+          cp -r storybook-static /tmp/storybook-build
+          echo "Preserved storybook build to /tmp/storybook-build"
+
       - name: Checkout gh-pages branch
         run: |
-          # Configure git
+          # Configure git with GitHub token for authentication
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
+          git config --local url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
           
           # Try to fetch and checkout gh-pages branch
           git fetch origin gh-pages:gh-pages 2>/dev/null || {
@@ -119,7 +129,7 @@ jobs:
             # Remove all root files but keep directories
             find . -maxdepth 1 -type f -not -name ".*" -delete 2>/dev/null || true
             # Copy main storybook files to root
-            cp -r ../storybook-static/* .
+            cp -r /tmp/storybook-build/* .
             
             # Create hub directory and page
             mkdir -p hub
@@ -288,7 +298,7 @@ jobs:
             echo "Deploying feature branch: $BRANCH_NAME to feature-branches/$CLEAN_BRANCH"
             # Create feature-branches directory structure
             mkdir -p "feature-branches/$CLEAN_BRANCH"
-            cp -r ../storybook-static/* "feature-branches/$CLEAN_BRANCH/"
+            cp -r /tmp/storybook-build/* "feature-branches/$CLEAN_BRANCH/"
             
             # Create or update feature-branches index
             mkdir -p feature-branches

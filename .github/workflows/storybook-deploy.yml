@@ -3,9 +3,7 @@ name: Deploy Storybook to GitHub Pages
 on:
   push:
     branches:
-      - main
-      - master
-      - trunk
+      - '**'  # Trigger on all branches
     paths:
       - 'src/**'
       - '.github/workflows/storybook-deploy.yml'
@@ -126,6 +124,10 @@ jobs:
               echo "Preserving existing feature-branches directory"
               mv deployment/feature-branches /tmp/feature-branches-backup
             fi
+            if [ -d "deployment/hub" ]; then
+              echo "Preserving existing hub directory"
+              mv deployment/hub /tmp/hub-backup
+            fi
             # Clear root files but not directories
             find deployment -maxdepth 1 -type f -delete 2>/dev/null || true
             # Copy new main storybook to root
@@ -134,7 +136,11 @@ jobs:
             if [ -d "/tmp/feature-branches-backup" ]; then
               mv /tmp/feature-branches-backup deployment/feature-branches
             fi
-            echo "Deployed main branch to root, preserved feature-branches/"
+            # Restore hub
+            if [ -d "/tmp/hub-backup" ]; then
+              mv /tmp/hub-backup deployment/hub
+            fi
+            echo "Deployed main branch to root, preserved feature-branches/ and hub/"
           else
             # Feature branch: add to feature-branches directory
             CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
@@ -142,9 +148,10 @@ jobs:
             cp -r storybook-static/* "deployment/feature-branches/$CLEAN_BRANCH/"
             echo "Deployed feature branch to feature-branches/$CLEAN_BRANCH/"
             
-            # For feature branches, update the main landing page
-            # Create or update the main index.html that lists all deployments
-            cat > deployment/index.html << 'EOF'
+            # For feature branches, create the deployments hub page
+            # Create or update the hub page that lists all deployments
+            mkdir -p deployment/hub
+            cat > deployment/hub/index.html << 'EOF'
           <!DOCTYPE html>
           <html>
           <head>
@@ -178,7 +185,7 @@ jobs:
                       <div class="deployment main-deployment">
                           <h3>📖 Production Storybook</h3>
                           <p>Latest stable version from the main branch</p>
-                          <a href="./iframe.html" target="_blank">View Main Storybook →</a>
+                          <a href="../index.html" target="_blank">View Main Storybook →</a>
                       </div>
                       
                       <div class="section-title">🚀 Feature Branch Deployments</div>
@@ -194,14 +201,14 @@ jobs:
                       const container = document.getElementById('feature-branches');
                       try {
                           // Try to list feature-branches directory
-                          const response = await fetch('./feature-branches/');
+                          const response = await fetch('../feature-branches/');
                           if (response.ok) {
                               // If we have a feature-branches directory, show link to it
                               container.innerHTML = `
                                   <div class="deployment feature-deployment">
                                       <h3>All Feature Branches</h3>
                                       <p>Browse all feature branch deployments</p>
-                                      <a href="./feature-branches/" target="_blank">View Feature Branches →</a>
+                                      <a href="../feature-branches/" target="_blank">View Feature Branches →</a>
                                   </div>
                               `;
                           } else {
@@ -257,7 +264,7 @@ jobs:
           <body>
               <div class="container">
                   <div class="back-link">
-                      <a href="../">← Back to Deployments Hub</a>
+                      <a href="../hub/">← Back to Deployments Hub</a>
                   </div>
                   
                   <div class="header">
@@ -300,9 +307,9 @@ jobs:
           </html>
           EOF
             
-            # Replace placeholders
-            sed -i "s/BRANCH_NAME_PLACEHOLDER/$BRANCH_NAME/g" deployment/index.html
-            sed -i "s/CLEAN_BRANCH_PLACEHOLDER/$CLEAN_BRANCH/g" deployment/index.html
+            # Replace placeholders (using | as delimiter to avoid issues with / in branch names)
+            sed -i "s|BRANCH_NAME_PLACEHOLDER|$BRANCH_NAME|g" deployment/index.html
+            sed -i "s|CLEAN_BRANCH_PLACEHOLDER|$CLEAN_BRANCH|g" deployment/index.html
           fi
 
       - name: Setup Pages
@@ -325,12 +332,12 @@ jobs:
           
           if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "trunk" ]]; then
             echo "page-url=${BASE_URL}" >> $GITHUB_OUTPUT
-            echo "hub-url=${BASE_URL}" >> $GITHUB_OUTPUT
+            echo "hub-url=${BASE_URL}hub/" >> $GITHUB_OUTPUT
             echo "Deployed main Storybook to: ${BASE_URL}"
           else
             CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
             echo "page-url=${BASE_URL}feature-branches/${CLEAN_BRANCH}/" >> $GITHUB_OUTPUT
-            echo "hub-url=${BASE_URL}" >> $GITHUB_OUTPUT
+            echo "hub-url=${BASE_URL}hub/" >> $GITHUB_OUTPUT
             echo "Deployed feature branch to: ${BASE_URL}feature-branches/${CLEAN_BRANCH}/"
           fi
 

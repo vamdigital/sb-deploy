@@ -73,7 +73,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9.9.0
+          version: 10.0.0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -102,13 +102,13 @@ jobs:
           
           if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "trunk" ]]; then
             # Main branch goes to root
-            cp -r src/storybook-static/* deployment/
+            cp -r storybook-static/* deployment/
             echo "Deploying to root for branch: $BRANCH_NAME"
           else
             # Feature branches go to subdirectories
             CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
             mkdir -p "deployment/$CLEAN_BRANCH"
-            cp -r src/storybook-static/* "deployment/$CLEAN_BRANCH/"
+            cp -r storybook-static/* "deployment/$CLEAN_BRANCH/"
             echo "Deploying to subdirectory: $CLEAN_BRANCH"
             
             # Create/update index page that lists all deployments

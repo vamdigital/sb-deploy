@@ -111,12 +111,23 @@ jobs:
           echo ""
           echo "Destination directory will be: ${{ needs.check-stories.outputs.branch-name == 'master' && '(root)' || format('branches/{0}', needs.check-stories.outputs.branch-name) }}"
           
-      - name: Deploy to GitHub Pages
+      - name: Deploy to GitHub Pages (Master/Main Branch)
+        if: needs.check-stories.outputs.branch-name == 'master' || needs.check-stories.outputs.branch-name == 'main'
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: storybook-static
-          destination_dir: ${{ needs.check-stories.outputs.branch-name == 'master' && '' || format('branches/{0}', needs.check-stories.outputs.branch-name) }}
+          keep_files: true
+          enable_jekyll: false
+          force_orphan: false
+
+      - name: Deploy to GitHub Pages (Feature Branch)
+        if: needs.check-stories.outputs.branch-name != 'master' && needs.check-stories.outputs.branch-name != 'main'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: storybook-static
+          destination_dir: branches/${{ needs.check-stories.outputs.branch-name }}
           keep_files: true
           enable_jekyll: false
           force_orphan: false

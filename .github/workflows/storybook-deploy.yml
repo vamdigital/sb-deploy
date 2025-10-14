@@ -307,9 +307,7 @@ jobs:
           </html>
           EOF
             
-            # Replace placeholders (using | as delimiter to avoid issues with / in branch names)
-            sed -i "s|BRANCH_NAME_PLACEHOLDER|$BRANCH_NAME|g" deployment/index.html
-            sed -i "s|CLEAN_BRANCH_PLACEHOLDER|$CLEAN_BRANCH|g" deployment/index.html
+            # Hub page is created dynamically with JavaScript, no placeholders needed
           fi
 
       - name: Setup Pages

@@ -87,10 +87,30 @@ jobs:
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
+      - name: Download existing deployed site
+        run: |
+          echo "📥 Downloading existing site to preserve all feature branches..."
+          SITE_URL="https://vamdigital.github.io/sb-deploy"
+          
+          # Create deployment directory and try to download existing content
+          mkdir -p deployment
+          
+          # Use wget to recursively download the existing site
+          echo "🌐 Attempting to download from: $SITE_URL"
+          if wget -r -np -nH -R "index.html*" -P deployment/ "$SITE_URL/" 2>/dev/null; then
+            echo "✅ Successfully downloaded existing site content"
+            # Clean up wget artifacts
+            rm -f deployment/robots.txt* 2>/dev/null || true
+          else
+            echo "ℹ️ No existing site found or download failed - will create fresh deployment"
+          fi
+          
+          echo "📂 Current site structure:"
+          find deployment -maxdepth 2 -type d 2>/dev/null || echo "Empty deployment directory"
+
       - name: Build complete site with all branches
         run: |
           echo "🏗️ Building complete site structure with ALL branches..."
-          mkdir -p deployment
           
           CURRENT_BRANCH="${{ needs.check-stories.outputs.branch-name }}"
           CURRENT_CLEAN=$(echo "$CURRENT_BRANCH" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')

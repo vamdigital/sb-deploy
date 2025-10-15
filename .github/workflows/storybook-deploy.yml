@@ -90,69 +90,85 @@ jobs:
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
-      - name: Rebuild complete site structure
+      - name: Fetch and restore existing site content
+        continue-on-error: true
         run: |
-          # Instead of trying to backup deployed content, rebuild everything from scratch
-          # by checking what branches exist and their last successful Storybook builds
+          # Fetch existing content from gh-pages branch to preserve all deployments
+          echo "🔄 Fetching existing site content from gh-pages branch..."
           
-          echo "🏗️ Rebuilding complete site structure from all branches with Storybook..."
+          # Create deployment directory
           mkdir -p deployment
           
-          # Get the current branch being deployed  
-          CURRENT_BRANCH="${{ needs.check-stories.outputs.branch-name }}"
-          CURRENT_CLEAN=$(echo "$CURRENT_BRANCH" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
-          
-          echo "📍 Current deployment: $CURRENT_BRANCH -> $CURRENT_CLEAN"
-          
-          # Always deploy current branch to its correct location
-          if [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "master" || "$CURRENT_BRANCH" == "trunk" ]]; then
-            echo "📂 Deploying main branch to root"
-            cp -r storybook-static/* deployment/
+          # Try to fetch and restore from gh-pages branch
+          if git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            echo "✅ Found existing gh-pages branch"
+            git fetch origin gh-pages
+            git checkout gh-pages
+            
+            # Show current structure
+            echo "📂 Current site structure:"
+            ls -la . | head -10
+            if [ -d "feature-branches" ]; then
+              echo "📁 Current feature branches:"
+              ls -la feature-branches/ || echo "feature-branches empty"
+            fi
+            
+            # Copy ALL existing content to deployment directory
+            echo "📋 Copying all existing content..."
+            cp -r * deployment/ 2>/dev/null || echo "No content to copy"
+            
+            # Switch back to current branch  
+            git checkout ${{ github.ref_name }}
+            
+            echo "✅ Restored existing site content"
           else
-            echo "📁 Deploying feature branch to feature-branches/$CURRENT_CLEAN"
-            mkdir -p "deployment/feature-branches/$CURRENT_CLEAN"
-            cp -r storybook-static/* "deployment/feature-branches/$CURRENT_CLEAN/"
+            echo "ℹ️ No existing gh-pages branch found - fresh deployment"
           fi
-          
-          # Add .nojekyll to prevent Jekyll processing
-          touch deployment/.nojekyll
-          
-          echo "✅ Site structure ready for deployment"
 
-      - name: Prepare deployment directory
+      - name: Update deployment with current branch
         run: |
-          # Create deployment structure
-          mkdir -p deployment
-          
-          # Restore existing content if it was preserved
-          if [ -d "/tmp/existing-site" ]; then
-            echo "Restoring existing site content..."
-            cp -r /tmp/existing-site/* deployment/ 2>/dev/null || echo "No content to restore"
-          fi
-          
-          # Determine deployment path
+          # Now update the deployment with the current branch's content
           BRANCH_NAME="${{ needs.check-stories.outputs.branch-name }}"
+          CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+          
+          echo "🚀 Updating deployment with: $BRANCH_NAME -> $CLEAN_BRANCH"
           
           if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "trunk" ]]; then
             # Main branch: preserve feature-branches but update root
+            echo "📂 Updating main branch (preserving feature branches)"
+            
             if [ -d "deployment/feature-branches" ]; then
-              echo "Preserving existing feature-branches directory"
+              echo "📁 Backing up existing feature-branches"
               mv deployment/feature-branches /tmp/feature-branches-backup
             fi
-            # Clear root files but not directories
+            
+            # Clear root files but preserve directories
             find deployment -maxdepth 1 -type f -delete 2>/dev/null || true
+            
             # Copy new main storybook to root
             cp -r storybook-static/* deployment/
+            
             # Restore feature-branches
             if [ -d "/tmp/feature-branches-backup" ]; then
               mv /tmp/feature-branches-backup deployment/feature-branches
+              echo "✅ Restored feature-branches directory"
             fi
-            echo "Deployed main branch to root, preserved feature-branches/"
+            
+            echo "🎉 Main branch updated, feature branches preserved"
           else
-            # Feature branch: add to feature-branches directory
-            CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+            # Feature branch: update specific feature branch directory
+            echo "📁 Updating feature branch: feature-branches/$CLEAN_BRANCH"
             mkdir -p "deployment/feature-branches/$CLEAN_BRANCH"
             cp -r storybook-static/* "deployment/feature-branches/$CLEAN_BRANCH/"
+            echo "✅ Feature branch $CLEAN_BRANCH updated"
+          fi
+          
+          # Add .nojekyll file
+          touch deployment/.nojekyll
+          
+          # Show final structure
+          echo "📊 Final deployment structure:"
+          find deployment -maxdepth 2 -type d | sort
             echo "Deployed feature branch to feature-branches/$CLEAN_BRANCH/"
           fi
       - name: Setup Pages

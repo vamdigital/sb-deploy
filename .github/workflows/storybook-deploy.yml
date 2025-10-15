@@ -139,6 +139,7 @@ jobs:
             mkdir -p "deployment/feature-branches/$CLEAN_BRANCH"
             cp -r storybook-static/* "deployment/feature-branches/$CLEAN_BRANCH/"
             echo "Deployed feature branch to feature-branches/$CLEAN_BRANCH/"
+          fi
       - name: Setup Pages
         uses: actions/configure-pages@v5
 

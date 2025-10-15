@@ -64,6 +64,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for all branches
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -81,110 +83,67 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
 
-      - name: Build Storybook
+      - name: Build all feature branches and current branch
         run: |
-          pnpm run build-storybook
-        env:
-          NODE_OPTIONS: --max_old_space_size=4096
-
-      - name: Download existing deployed site
-        run: |
-          echo "📥 Downloading existing site to preserve all feature branches..."
-          SITE_URL="https://vamdigital.github.io/sb-deploy"
-          
-          # Create deployment directory and try to download existing content
-          mkdir -p deployment
-          
-          # Use wget to recursively download the existing site
-          echo "🌐 Attempting to download from: $SITE_URL"
-          # More aggressive wget options to get everything
-          if wget -r -np -nH -E -T 10 --reject="*.tmp,*.temp" -P deployment/ "$SITE_URL/" 2>/dev/null; then
-            echo "✅ Successfully downloaded existing site content"
-          elif curl -f "$SITE_URL/feature-branches/" > /dev/null 2>&1; then
-            echo "🔄 wget failed, trying curl for feature-branches..."
-            # Try to get feature branches using curl and create directory structure
-            mkdir -p deployment/feature-branches
-            # This is a fallback - we'll rely on the existing structure being minimal
-          else
-            echo "ℹ️ No existing site found or download failed - will create fresh deployment"
-          fi
-          
-          # Clean up common wget artifacts
-          find deployment -name "robots.txt*" -delete 2>/dev/null || true
-          find deployment -name "index.html*" -not -name "index.html" -delete 2>/dev/null || true
-          
-          echo "📂 Downloaded site structure:"
-          find deployment -maxdepth 3 -type d 2>/dev/null | sort || echo "Empty deployment directory"
-
-      - name: Build complete site with all branches
-        run: |
-          echo "🏗️ Building complete site structure with ALL branches..."
+          echo "🏗️ Building complete site with all feature branches..."
+          mkdir -p deployment/feature-branches
           
           CURRENT_BRANCH="${{ needs.check-stories.outputs.branch-name }}"
-          CURRENT_CLEAN=$(echo "$CURRENT_BRANCH" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+          echo "📍 Current branch: $CURRENT_BRANCH"
           
-          echo "📍 Current branch: $CURRENT_BRANCH -> $CURRENT_CLEAN"
+          # Get all feature branches (branches that start with 'feat')
+          echo "🔍 Finding all feature branches..."
+          git fetch --all
+          ALL_BRANCHES=$(git branch -r | grep -E 'origin/feat' | sed 's/origin\///' | tr -d ' ')
           
-          # Step 1: Always build and deploy master/main branch to root (unless current branch IS master)
-          if [[ "$CURRENT_BRANCH" != "main" && "$CURRENT_BRANCH" != "master" && "$CURRENT_BRANCH" != "trunk" ]]; then
-            echo "🔄 Building master branch for root deployment..."
+          echo "📝 Found feature branches:"
+          for branch in $ALL_BRANCHES; do
+            echo "  - $branch"
+          done
+          
+          # Build each feature branch
+          for branch in $ALL_BRANCHES; do
+            echo "🏗️ Building feature branch: $branch"
+            CLEAN_BRANCH=$(echo "$branch" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
             
-            # Fetch and build master branch
-            git fetch origin master:master 2>/dev/null || git fetch origin main:main 2>/dev/null || echo "Could not fetch main branch"
-            
-            # Check out master temporarily and build it
-            ORIGINAL_BRANCH=$CURRENT_BRANCH
-            if git show-ref --verify --quiet refs/heads/master; then
-              git checkout master
-              echo "📦 Building Storybook for master branch..."
-              pnpm run build-storybook --output-dir storybook-master 2>/dev/null || echo "Could not build master storybook"
+            if git checkout "$branch" 2>/dev/null; then
+              echo "✅ Checked out $branch"
               
-              if [ -d "storybook-master" ]; then
-                echo "✅ Master storybook built successfully"
-                cp -r storybook-master/* deployment/
+              if pnpm run build-storybook --output-dir "storybook-$CLEAN_BRANCH"; then
+                echo "✅ Built storybook for $branch"
+                mkdir -p "deployment/feature-branches/$CLEAN_BRANCH"
+                cp -r "storybook-$CLEAN_BRANCH"/* "deployment/feature-branches/$CLEAN_BRANCH/"
+                echo "✅ Deployed $branch to feature-branches/$CLEAN_BRANCH/"
               else
-                echo "⚠️ Master storybook build failed - deploying placeholder"
-                echo "<h1>Master Branch Storybook</h1><p>Please deploy from master branch to update.</p>" > deployment/index.html
+                echo "⚠️ Failed to build storybook for $branch"
               fi
-              
-              git checkout $ORIGINAL_BRANCH
             else
-              echo "⚠️ Master branch not found - deploying without root content"
+              echo "⚠️ Could not checkout $branch"
+            fi
+          done
+          
+          # Build master/main branch for root
+          echo "🏠 Building master branch for root..."
+          if git checkout master 2>/dev/null || git checkout main 2>/dev/null; then
+            echo "✅ Checked out master/main"
+            if pnpm run build-storybook --output-dir storybook-master; then
+              echo "✅ Built master storybook"
+              cp -r storybook-master/* deployment/
+            else
+              echo "⚠️ Failed to build master storybook"
             fi
           fi
           
-          # Step 2: Deploy current branch to its correct location  
-          if [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "master" || "$CURRENT_BRANCH" == "trunk" ]]; then
-            echo "🏠 Current branch is main - deploying to root (preserving feature branches)"
-            # Preserve feature-branches directory if it exists
-            if [ -d "deployment/feature-branches" ]; then
-              echo "💾 Backing up existing feature branches..."
-              mv deployment/feature-branches deployment/feature-branches-backup 2>/dev/null || true
-            fi
-            
-            # Deploy master content to root
-            cp -r storybook-static/* deployment/
-            
-            # Restore feature branches
-            if [ -d "deployment/feature-branches-backup" ]; then
-              echo "🔄 Restoring feature branches..."
-              mv deployment/feature-branches-backup deployment/feature-branches
-            fi
-          else
-            echo "📁 Current branch is feature - deploying to feature-branches/$CURRENT_CLEAN"
-            mkdir -p "deployment/feature-branches/$CURRENT_CLEAN"
-            cp -r storybook-static/* "deployment/feature-branches/$CURRENT_CLEAN/"
-          fi
+          # Return to current branch
+          git checkout "$CURRENT_BRANCH"
           
           # Add .nojekyll file
           touch deployment/.nojekyll
           
-          # Show final structure
-          echo "📊 Complete deployment structure:"
-          find deployment -maxdepth 2 -type d | sort
-          echo "📋 Root files:"
-          ls -la deployment/ | head -5
-
+          echo "📊 Final deployment structure:"
+          find deployment -maxdepth 3 -type d | sort
+          echo "🌿 Feature branches available:"
+          ls -la deployment/feature-branches/ 2>/dev/null || echo "No feature branches"
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -213,4 +172,18 @@ jobs:
             echo "page-url=${BASE_URL}feature-branches/${CLEAN_BRANCH}/" >> $GITHUB_OUTPUT
             echo "hub-url=${BASE_URL}" >> $GITHUB_OUTPUT
             echo "Deployed feature branch to: ${BASE_URL}feature-branches/${CLEAN_BRANCH}/"
+            echo "All feature branches available at: ${BASE_URL}feature-branches/"
+            echo "Main branch available at: ${BASE_URL}"
           fi
+
+  # Cleanup job for merged/deleted branches  
+  cleanup-branches:
+    if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for deleted branches
+        run: |
+          echo "🧹 Checking for branches that need cleanup..."
+          # This runs when branches are merged/deleted
+          # For now, manual cleanup - could be enhanced later
+          echo "Manual cleanup may be needed for old feature branches"

@@ -97,16 +97,24 @@ jobs:
           
           # Use wget to recursively download the existing site
           echo "🌐 Attempting to download from: $SITE_URL"
-          if wget -r -np -nH -R "index.html*" -P deployment/ "$SITE_URL/" 2>/dev/null; then
+          # More aggressive wget options to get everything
+          if wget -r -np -nH -E -T 10 --reject="*.tmp,*.temp" -P deployment/ "$SITE_URL/" 2>/dev/null; then
             echo "✅ Successfully downloaded existing site content"
-            # Clean up wget artifacts
-            rm -f deployment/robots.txt* 2>/dev/null || true
+          elif curl -f "$SITE_URL/feature-branches/" > /dev/null 2>&1; then
+            echo "🔄 wget failed, trying curl for feature-branches..."
+            # Try to get feature branches using curl and create directory structure
+            mkdir -p deployment/feature-branches
+            # This is a fallback - we'll rely on the existing structure being minimal
           else
             echo "ℹ️ No existing site found or download failed - will create fresh deployment"
           fi
           
-          echo "📂 Current site structure:"
-          find deployment -maxdepth 2 -type d 2>/dev/null || echo "Empty deployment directory"
+          # Clean up common wget artifacts
+          find deployment -name "robots.txt*" -delete 2>/dev/null || true
+          find deployment -name "index.html*" -not -name "index.html" -delete 2>/dev/null || true
+          
+          echo "📂 Downloaded site structure:"
+          find deployment -maxdepth 3 -type d 2>/dev/null | sort || echo "Empty deployment directory"
 
       - name: Build complete site with all branches
         run: |
@@ -147,8 +155,21 @@ jobs:
           
           # Step 2: Deploy current branch to its correct location  
           if [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "master" || "$CURRENT_BRANCH" == "trunk" ]]; then
-            echo "� Current branch is main - deploying to root"
+            echo "🏠 Current branch is main - deploying to root (preserving feature branches)"
+            # Preserve feature-branches directory if it exists
+            if [ -d "deployment/feature-branches" ]; then
+              echo "💾 Backing up existing feature branches..."
+              mv deployment/feature-branches deployment/feature-branches-backup 2>/dev/null || true
+            fi
+            
+            # Deploy master content to root
             cp -r storybook-static/* deployment/
+            
+            # Restore feature branches
+            if [ -d "deployment/feature-branches-backup" ]; then
+              echo "🔄 Restoring feature branches..."
+              mv deployment/feature-branches-backup deployment/feature-branches
+            fi
           else
             echo "📁 Current branch is feature - deploying to feature-branches/$CURRENT_CLEAN"
             mkdir -p "deployment/feature-branches/$CURRENT_CLEAN"

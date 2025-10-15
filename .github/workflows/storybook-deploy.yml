@@ -169,8 +169,6 @@ jobs:
           # Show final structure
           echo "📊 Final deployment structure:"
           find deployment -maxdepth 2 -type d | sort
-            echo "Deployed feature branch to feature-branches/$CLEAN_BRANCH/"
-          fi
       - name: Setup Pages
         uses: actions/configure-pages@v5
 

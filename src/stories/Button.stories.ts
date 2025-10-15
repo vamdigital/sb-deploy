@@ -29,7 +29,7 @@ type Story = StoryObj<typeof meta>;
 export const Primary: Story = {
   args: {
     primary: true,
-    label: 'Button Merged-Feat-8',
+    label: 'Button Feat-8',
   },
 };
 

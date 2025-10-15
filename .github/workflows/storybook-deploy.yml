@@ -61,9 +61,6 @@ jobs:
     needs: check-stories
     if: needs.check-stories.outputs.has-stories == 'true'
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.get-url.outputs.page-url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -169,31 +166,27 @@ jobs:
           # Show final structure
           echo "📊 Final deployment structure:"
           find deployment -maxdepth 2 -type d | sort
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: './deployment'
-
       - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./deployment
+          keep_files: true
+          enable_jekyll: false
 
       - name: Get deployment URL
         id: get-url
         run: |
           BRANCH_NAME="${{ needs.check-stories.outputs.branch-name }}"
-          BASE_URL="${{ steps.deployment.outputs.page_url }}"
+          BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
           
           if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "trunk" ]]; then
-            echo "page-url=${BASE_URL}" >> $GITHUB_OUTPUT
-            echo "hub-url=${BASE_URL}" >> $GITHUB_OUTPUT
-            echo "Deployed main Storybook to: ${BASE_URL}"
+            echo "page-url=${BASE_URL}/" >> $GITHUB_OUTPUT
+            echo "hub-url=${BASE_URL}/" >> $GITHUB_OUTPUT
+            echo "Deployed main Storybook to: ${BASE_URL}/"
           else
             CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
-            echo "page-url=${BASE_URL}feature-branches/${CLEAN_BRANCH}/" >> $GITHUB_OUTPUT
-            echo "hub-url=${BASE_URL}" >> $GITHUB_OUTPUT
-            echo "Deployed feature branch to: ${BASE_URL}feature-branches/${CLEAN_BRANCH}/"
+            echo "page-url=${BASE_URL}/feature-branches/${CLEAN_BRANCH}/" >> $GITHUB_OUTPUT
+            echo "hub-url=${BASE_URL}/" >> $GITHUB_OUTPUT
+            echo "Deployed feature branch to: ${BASE_URL}/feature-branches/${CLEAN_BRANCH}/"
           fi

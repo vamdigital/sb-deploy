@@ -61,6 +61,9 @@ jobs:
     needs: check-stories
     if: needs.check-stories.outputs.has-stories == 'true'
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.get-url.outputs.page-url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

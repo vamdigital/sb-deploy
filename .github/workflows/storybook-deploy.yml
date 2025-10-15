@@ -3,15 +3,17 @@ name: Deploy Storybook to GitHub Pages
 on:
   push:
     branches:
-      - '**'  # Trigger on all branches
+      - '**'  # All branches - stories check will determine if deployment needed
     paths:
       - 'src/**'
       - '.github/workflows/storybook-deploy.yml'
   pull_request:
     paths:
       - 'src/**'
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, closed]  # Add closed for cleanup
   workflow_dispatch:
+  repository_dispatch:
+    types: [cleanup-deployment]  # For triggering cleanup rebuilds
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
@@ -56,10 +58,15 @@ jobs:
             echo "No Storybook stories found, skipping deployment"
           fi
 
-  # Build and deploy job
+  # Build and deploy job - only for existing branches
   build-and-deploy:
     needs: check-stories
-    if: needs.check-stories.outputs.has-stories == 'true'
+    if: |
+      needs.check-stories.outputs.has-stories == 'true' && 
+      (github.event_name == 'push' || 
+       github.event_name == 'workflow_dispatch' ||
+       github.event_name == 'repository_dispatch' ||
+       (github.event_name == 'pull_request' && github.event.action != 'closed'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -176,14 +183,24 @@ jobs:
             echo "Main branch available at: ${BASE_URL}"
           fi
 
-  # Cleanup job for merged/deleted branches  
-  cleanup-branches:
-    if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+  # Trigger rebuild when PR is merged (to clean up deleted branches)
+  cleanup-merged-branch:
+    if: |
+      github.event_name == 'pull_request' && 
+      github.event.action == 'closed' && 
+      github.event.pull_request.merged == true &&
+      github.head_ref != 'master' && 
+      github.head_ref != 'main'
     runs-on: ubuntu-latest
     steps:
-      - name: Check for deleted branches
+      - name: Trigger master rebuild to clean up deleted branch
         run: |
-          echo "🧹 Checking for branches that need cleanup..."
-          # This runs when branches are merged/deleted
-          # For now, manual cleanup - could be enhanced later
-          echo "Manual cleanup may be needed for old feature branches"
+          echo "🧹 PR merged and branch deleted, triggering master rebuild..."
+          echo "Branch ${{ github.head_ref }} was merged and will be cleaned up"
+          
+          # Trigger a rebuild by making a commit to master
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/dispatches \
+            -d '{"event_type":"cleanup-deployment"}'

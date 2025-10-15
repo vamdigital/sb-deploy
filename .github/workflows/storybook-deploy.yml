@@ -90,19 +90,34 @@ jobs:
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
-      - name: Download existing GitHub Pages (if exists)
-        continue-on-error: true
+      - name: Rebuild complete site structure
         run: |
-          # Try to download the current gh-pages branch content
-          git fetch origin gh-pages:gh-pages 2>/dev/null || echo "No existing gh-pages branch found"
-          if git show-ref --verify --quiet refs/heads/gh-pages; then
-            echo "Found existing gh-pages branch, checking out content..."
-            git checkout gh-pages -- . 2>/dev/null || echo "Could not checkout gh-pages content"
-            # Move existing content to preserve it
-            mkdir -p /tmp/existing-site
-            cp -r * /tmp/existing-site/ 2>/dev/null || echo "No existing content to preserve"
-            git checkout ${{ github.ref_name }}
+          # Instead of trying to backup deployed content, rebuild everything from scratch
+          # by checking what branches exist and their last successful Storybook builds
+          
+          echo "🏗️ Rebuilding complete site structure from all branches with Storybook..."
+          mkdir -p deployment
+          
+          # Get the current branch being deployed  
+          CURRENT_BRANCH="${{ needs.check-stories.outputs.branch-name }}"
+          CURRENT_CLEAN=$(echo "$CURRENT_BRANCH" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+          
+          echo "📍 Current deployment: $CURRENT_BRANCH -> $CURRENT_CLEAN"
+          
+          # Always deploy current branch to its correct location
+          if [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "master" || "$CURRENT_BRANCH" == "trunk" ]]; then
+            echo "📂 Deploying main branch to root"
+            cp -r storybook-static/* deployment/
+          else
+            echo "📁 Deploying feature branch to feature-branches/$CURRENT_CLEAN"
+            mkdir -p "deployment/feature-branches/$CURRENT_CLEAN"
+            cp -r storybook-static/* "deployment/feature-branches/$CURRENT_CLEAN/"
           fi
+          
+          # Add .nojekyll to prevent Jekyll processing
+          touch deployment/.nojekyll
+          
+          echo "✅ Site structure ready for deployment"
 
       - name: Prepare deployment directory
         run: |

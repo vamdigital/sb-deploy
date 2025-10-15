@@ -3,9 +3,7 @@ name: Deploy Storybook to GitHub Pages
 on:
   push:
     branches:
-      - main
-      - master
-      - trunk
+      - '**'  # Trigger on all branches
     paths:
       - 'src/**'
       - '.github/workflows/storybook-deploy.yml'
@@ -17,7 +15,7 @@ on:
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
   pull-requests: write
@@ -301,8 +299,8 @@ jobs:
           EOF
             
             # Replace placeholders
-            sed -i "s/BRANCH_NAME_PLACEHOLDER/$BRANCH_NAME/g" deployment/index.html
-            sed -i "s/CLEAN_BRANCH_PLACEHOLDER/$CLEAN_BRANCH/g" deployment/index.html
+            sed -i "s|BRANCH_NAME_PLACEHOLDER/$BRANCH_NAME/g" deployment/index.html
+            sed -i "s|CLEAN_BRANCH_PLACEHOLDER/$CLEAN_BRANCH/g" deployment/index.html
           fi
 
       - name: Setup Pages

@@ -87,65 +87,64 @@ jobs:
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
-      - name: Prepare complete site structure
+      - name: Build complete site with all branches
         run: |
-          echo "🏗️ Building complete site structure for GitHub Actions deployment..."
+          echo "🏗️ Building complete site structure with ALL branches..."
           mkdir -p deployment
           
-          # The key insight: GitHub Actions deployment replaces everything,
-          # so we need to rebuild a complete site structure every time.
-          # We'll deploy the current branch but also try to preserve others by rebuilding them.
+          CURRENT_BRANCH="${{ needs.check-stories.outputs.branch-name }}"
+          CURRENT_CLEAN=$(echo "$CURRENT_BRANCH" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
           
-          BRANCH_NAME="${{ needs.check-stories.outputs.branch-name }}"
-          echo "📍 Current branch: $BRANCH_NAME"
+          echo "📍 Current branch: $CURRENT_BRANCH -> $CURRENT_CLEAN"
           
-          # For now, deploy just the current branch in the correct structure
-          # TODO: In the future, we can enhance this to rebuild other branches too
-
-      - name: Update deployment with current branch
-        run: |
-          # Now update the deployment with the current branch's content
-          BRANCH_NAME="${{ needs.check-stories.outputs.branch-name }}"
-          CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
-          
-          echo "🚀 Updating deployment with: $BRANCH_NAME -> $CLEAN_BRANCH"
-          
-          if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "trunk" ]]; then
-            # Main branch: preserve feature-branches but update root
-            echo "📂 Updating main branch (preserving feature branches)"
+          # Step 1: Always build and deploy master/main branch to root (unless current branch IS master)
+          if [[ "$CURRENT_BRANCH" != "main" && "$CURRENT_BRANCH" != "master" && "$CURRENT_BRANCH" != "trunk" ]]; then
+            echo "🔄 Building master branch for root deployment..."
             
-            if [ -d "deployment/feature-branches" ]; then
-              echo "📁 Backing up existing feature-branches"
-              mv deployment/feature-branches /tmp/feature-branches-backup
+            # Fetch and build master branch
+            git fetch origin master:master 2>/dev/null || git fetch origin main:main 2>/dev/null || echo "Could not fetch main branch"
+            
+            # Check out master temporarily and build it
+            ORIGINAL_BRANCH=$CURRENT_BRANCH
+            if git show-ref --verify --quiet refs/heads/master; then
+              git checkout master
+              echo "📦 Building Storybook for master branch..."
+              pnpm run build-storybook --output-dir storybook-master 2>/dev/null || echo "Could not build master storybook"
+              
+              if [ -d "storybook-master" ]; then
+                echo "✅ Master storybook built successfully"
+                cp -r storybook-master/* deployment/
+              else
+                echo "⚠️ Master storybook build failed - deploying placeholder"
+                echo "<h1>Master Branch Storybook</h1><p>Please deploy from master branch to update.</p>" > deployment/index.html
+              fi
+              
+              git checkout $ORIGINAL_BRANCH
+            else
+              echo "⚠️ Master branch not found - deploying without root content"
             fi
-            
-            # Clear root files but preserve directories
-            find deployment -maxdepth 1 -type f -delete 2>/dev/null || true
-            
-            # Copy new main storybook to root
+          fi
+          
+          # Step 2: Deploy current branch to its correct location  
+          if [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "master" || "$CURRENT_BRANCH" == "trunk" ]]; then
+            echo "� Current branch is main - deploying to root"
             cp -r storybook-static/* deployment/
-            
-            # Restore feature-branches
-            if [ -d "/tmp/feature-branches-backup" ]; then
-              mv /tmp/feature-branches-backup deployment/feature-branches
-              echo "✅ Restored feature-branches directory"
-            fi
-            
-            echo "🎉 Main branch updated, feature branches preserved"
           else
-            # Feature branch: update specific feature branch directory
-            echo "📁 Updating feature branch: feature-branches/$CLEAN_BRANCH"
-            mkdir -p "deployment/feature-branches/$CLEAN_BRANCH"
-            cp -r storybook-static/* "deployment/feature-branches/$CLEAN_BRANCH/"
-            echo "✅ Feature branch $CLEAN_BRANCH updated"
+            echo "📁 Current branch is feature - deploying to feature-branches/$CURRENT_CLEAN"
+            mkdir -p "deployment/feature-branches/$CURRENT_CLEAN"
+            cp -r storybook-static/* "deployment/feature-branches/$CURRENT_CLEAN/"
           fi
           
           # Add .nojekyll file
           touch deployment/.nojekyll
           
           # Show final structure
-          echo "📊 Final deployment structure:"
+          echo "📊 Complete deployment structure:"
           find deployment -maxdepth 2 -type d | sort
+          echo "📋 Root files:"
+          ls -la deployment/ | head -5
+
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 

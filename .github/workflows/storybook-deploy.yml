@@ -90,61 +90,20 @@ jobs:
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
-      - name: Debug deployment info
-        run: |
-          echo "Branch name: ${{ needs.check-stories.outputs.branch-name }}"
-          echo "Repository: ${{ github.repository }}"
-          echo "Repository owner: ${{ github.repository_owner }}"
-          echo "Repository name: ${{ github.event.repository.name }}"
-          echo ""
-          echo "Contents of storybook-static directory:"
-          ls -la storybook-static/
-          echo ""
-          echo "Checking for index.html:"
-          if [ -f "storybook-static/index.html" ]; then
-            echo "✅ index.html found in storybook-static/"
-            echo "First few lines of index.html:"
-            head -n 10 storybook-static/index.html
-          else
-            echo "❌ index.html NOT found in storybook-static/"
-          fi
-          echo ""
-          echo "Destination directory will be: ${{ needs.check-stories.outputs.branch-name == 'master' && '(root)' || format('branches/{0}', needs.check-stories.outputs.branch-name) }}"
-          
-      - name: Deploy to GitHub Pages (Master/Main Branch)
-        if: needs.check-stories.outputs.branch-name == 'master' || needs.check-stories.outputs.branch-name == 'main'
+      - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: storybook-static
-          keep_files: true
           enable_jekyll: false
-          force_orphan: false
-
-      - name: Deploy to GitHub Pages (Feature Branch)
-        if: needs.check-stories.outputs.branch-name != 'master' && needs.check-stories.outputs.branch-name != 'main'
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: storybook-static
-          destination_dir: branches/${{ needs.check-stories.outputs.branch-name }}
-          keep_files: true
-          enable_jekyll: false
-          force_orphan: false
 
       - name: Get deployment URL
         id: get-url
         run: |
           BRANCH_NAME="${{ needs.check-stories.outputs.branch-name }}"
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
-          
-          if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "trunk" ]]; then
-            echo "page-url=${BASE_URL}/" >> $GITHUB_OUTPUT
-            echo "Deployed main Storybook to: ${BASE_URL}/"
-          else
-            echo "page-url=${BASE_URL}/branches/${BRANCH_NAME}/" >> $GITHUB_OUTPUT
-            echo "Deployed feature branch to: ${BASE_URL}/branches/${BRANCH_NAME}/"
-          fi
+          echo "page-url=${BASE_URL}/" >> $GITHUB_OUTPUT
+          echo "Deployed Storybook from branch $BRANCH_NAME to: ${BASE_URL}/"
 
       - name: Comment PR with deployment URL
         if: github.event_name == 'pull_request'

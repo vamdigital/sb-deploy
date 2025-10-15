@@ -87,40 +87,20 @@ jobs:
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
-      - name: Fetch and restore existing site content
-        continue-on-error: true
+      - name: Prepare complete site structure
         run: |
-          # Fetch existing content from gh-pages branch to preserve all deployments
-          echo "🔄 Fetching existing site content from gh-pages branch..."
-          
-          # Create deployment directory
+          echo "🏗️ Building complete site structure for GitHub Actions deployment..."
           mkdir -p deployment
           
-          # Try to fetch and restore from gh-pages branch
-          if git ls-remote --heads origin gh-pages | grep -q gh-pages; then
-            echo "✅ Found existing gh-pages branch"
-            git fetch origin gh-pages
-            git checkout gh-pages
-            
-            # Show current structure
-            echo "📂 Current site structure:"
-            ls -la . | head -10
-            if [ -d "feature-branches" ]; then
-              echo "📁 Current feature branches:"
-              ls -la feature-branches/ || echo "feature-branches empty"
-            fi
-            
-            # Copy ALL existing content to deployment directory
-            echo "📋 Copying all existing content..."
-            cp -r * deployment/ 2>/dev/null || echo "No content to copy"
-            
-            # Switch back to current branch  
-            git checkout ${{ github.ref_name }}
-            
-            echo "✅ Restored existing site content"
-          else
-            echo "ℹ️ No existing gh-pages branch found - fresh deployment"
-          fi
+          # The key insight: GitHub Actions deployment replaces everything,
+          # so we need to rebuild a complete site structure every time.
+          # We'll deploy the current branch but also try to preserve others by rebuilding them.
+          
+          BRANCH_NAME="${{ needs.check-stories.outputs.branch-name }}"
+          echo "📍 Current branch: $BRANCH_NAME"
+          
+          # For now, deploy just the current branch in the correct structure
+          # TODO: In the future, we can enhance this to rebuild other branches too
 
       - name: Update deployment with current branch
         run: |
@@ -166,27 +146,31 @@ jobs:
           # Show final structure
           echo "📊 Final deployment structure:"
           find deployment -maxdepth 2 -type d | sort
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./deployment
-          keep_files: true
-          enable_jekyll: false
+          path: ./deployment
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
 
       - name: Get deployment URL
         id: get-url
         run: |
           BRANCH_NAME="${{ needs.check-stories.outputs.branch-name }}"
-          BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
+          BASE_URL="${{ steps.deployment.outputs.page_url }}"
           
           if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "trunk" ]]; then
-            echo "page-url=${BASE_URL}/" >> $GITHUB_OUTPUT
-            echo "hub-url=${BASE_URL}/" >> $GITHUB_OUTPUT
-            echo "Deployed main Storybook to: ${BASE_URL}/"
+            echo "page-url=${BASE_URL}" >> $GITHUB_OUTPUT
+            echo "hub-url=${BASE_URL}" >> $GITHUB_OUTPUT
+            echo "Deployed main Storybook to: ${BASE_URL}"
           else
             CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
-            echo "page-url=${BASE_URL}/feature-branches/${CLEAN_BRANCH}/" >> $GITHUB_OUTPUT
-            echo "hub-url=${BASE_URL}/" >> $GITHUB_OUTPUT
-            echo "Deployed feature branch to: ${BASE_URL}/feature-branches/${CLEAN_BRANCH}/"
+            echo "page-url=${BASE_URL}feature-branches/${CLEAN_BRANCH}/" >> $GITHUB_OUTPUT
+            echo "hub-url=${BASE_URL}" >> $GITHUB_OUTPUT
+            echo "Deployed feature branch to: ${BASE_URL}feature-branches/${CLEAN_BRANCH}/"
           fi

@@ -3,7 +3,9 @@ name: Deploy Storybook to GitHub Pages
 on:
   push:
     branches:
-      - '**'  # Trigger on all branches
+      - main
+      - master
+      - trunk
     paths:
       - 'src/**'
       - '.github/workflows/storybook-deploy.yml'
@@ -15,7 +17,7 @@ on:
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
   pull-requests: write
@@ -61,12 +63,12 @@ jobs:
     needs: check-stories
     if: needs.check-stories.outputs.has-stories == 'true'
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.get-url.outputs.page-url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -90,20 +92,247 @@ jobs:
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+      - name: Download existing GitHub Pages (if exists)
+        continue-on-error: true
+        run: |
+          # Try to download the current gh-pages branch content
+          git fetch origin gh-pages:gh-pages 2>/dev/null || echo "No existing gh-pages branch found"
+          if git show-ref --verify --quiet refs/heads/gh-pages; then
+            echo "Found existing gh-pages branch, checking out content..."
+            git checkout gh-pages -- . 2>/dev/null || echo "Could not checkout gh-pages content"
+            # Move existing content to preserve it
+            mkdir -p /tmp/existing-site
+            cp -r * /tmp/existing-site/ 2>/dev/null || echo "No existing content to preserve"
+            git checkout ${{ github.ref_name }}
+          fi
+
+      - name: Prepare deployment directory
+        run: |
+          # Create deployment structure
+          mkdir -p deployment
+          
+          # Restore existing content if it was preserved
+          if [ -d "/tmp/existing-site" ]; then
+            echo "Restoring existing site content..."
+            cp -r /tmp/existing-site/* deployment/ 2>/dev/null || echo "No content to restore"
+          fi
+          
+          # Determine deployment path
+          BRANCH_NAME="${{ needs.check-stories.outputs.branch-name }}"
+          
+          if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "trunk" ]]; then
+            # Main branch: preserve feature-branches but update root
+            if [ -d "deployment/feature-branches" ]; then
+              echo "Preserving existing feature-branches directory"
+              mv deployment/feature-branches /tmp/feature-branches-backup
+            fi
+            # Clear root files but not directories
+            find deployment -maxdepth 1 -type f -delete 2>/dev/null || true
+            # Copy new main storybook to root
+            cp -r storybook-static/* deployment/
+            # Restore feature-branches
+            if [ -d "/tmp/feature-branches-backup" ]; then
+              mv /tmp/feature-branches-backup deployment/feature-branches
+            fi
+            echo "Deployed main branch to root, preserved feature-branches/"
+          else
+            # Feature branch: add to feature-branches directory
+            CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+            mkdir -p "deployment/feature-branches/$CLEAN_BRANCH"
+            cp -r storybook-static/* "deployment/feature-branches/$CLEAN_BRANCH/"
+            echo "Deployed feature branch to feature-branches/$CLEAN_BRANCH/"
+            
+            # For feature branches, update the main landing page
+            # Create or update the main index.html that lists all deployments
+            cat > deployment/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Storybook Deployments Hub</title>
+              <style>
+                  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 2rem; background: #f8f9fa; }
+                  .container { max-width: 900px; margin: 0 auto; }
+                  .header { text-align: center; margin-bottom: 3rem; }
+                  .header h1 { color: #333; margin-bottom: 0.5rem; }
+                  .header p { color: #666; font-size: 1.1rem; }
+                  .deployments { display: grid; gap: 1.5rem; }
+                  .deployment { background: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+                  .deployment h3 { margin: 0 0 0.5rem 0; color: #333; }
+                  .deployment p { color: #666; margin: 0.5rem 0 1rem 0; }
+                  .deployment a { color: #0366d6; text-decoration: none; font-weight: 500; }
+                  .deployment a:hover { text-decoration: underline; }
+                  .main-deployment { border-left: 4px solid #28a745; }
+                  .feature-deployment { border-left: 4px solid #fd7e14; }
+                  .feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
+                  .section-title { color: #333; font-size: 1.3rem; margin: 2rem 0 1rem 0; font-weight: 600; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <div class="header">
+                      <h1>🎨 Storybook Deployments Hub</h1>
+                      <p>Access all your Storybook deployments in one place</p>
+                  </div>
+                  
+                  <div class="deployments">
+                      <div class="deployment main-deployment">
+                          <h3>📖 Production Storybook</h3>
+                          <p>Latest stable version from the main branch</p>
+                          <a href="./iframe.html" target="_blank">View Main Storybook →</a>
+                      </div>
+                      
+                      <div class="section-title">🚀 Feature Branch Deployments</div>
+                      <div id="feature-branches" class="feature-grid">
+                          <!-- Feature branches will be listed here -->
+                      </div>
+                  </div>
+              </div>
+              
+              <script>
+                  // Dynamically load feature branches
+                  async function loadFeatureBranches() {
+                      const container = document.getElementById('feature-branches');
+                      try {
+                          // Try to list feature-branches directory
+                          const response = await fetch('./feature-branches/');
+                          if (response.ok) {
+                              // If we have a feature-branches directory, show link to it
+                              container.innerHTML = `
+                                  <div class="deployment feature-deployment">
+                                      <h3>All Feature Branches</h3>
+                                      <p>Browse all feature branch deployments</p>
+                                      <a href="./feature-branches/" target="_blank">View Feature Branches →</a>
+                                  </div>
+                              `;
+                          } else {
+                              container.innerHTML = `
+                                  <div class="deployment" style="text-align: center; color: #666;">
+                                      <p>No feature branch deployments yet</p>
+                                      <p style="font-size: 0.9rem;">Feature branches will appear here when deployed</p>
+                                  </div>
+                              `;
+                          }
+                      } catch (e) {
+                          container.innerHTML = `
+                              <div class="deployment" style="text-align: center; color: #666;">
+                                  <p>No feature branch deployments yet</p>
+                                  <p style="font-size: 0.9rem;">Feature branches will appear here when deployed</p>
+                              </div>
+                          `;
+                      }
+                  }
+                  
+                  // Load on page load
+                  loadFeatureBranches();
+              </script>
+          </body>
+          </html>
+          EOF
+            
+            # Also create/update the feature-branches index page
+            mkdir -p deployment/feature-branches
+            
+            # Generate feature branches listing
+            echo "Creating feature-branches index page..."
+            cat > deployment/feature-branches/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Feature Branch Storybooks</title>
+              <style>
+                  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 2rem; background: #f8f9fa; }
+                  .container { max-width: 900px; margin: 0 auto; }
+                  .header { text-align: center; margin-bottom: 3rem; }
+                  .back-link { margin-bottom: 2rem; }
+                  .back-link a { color: #666; text-decoration: none; font-weight: 500; }
+                  .back-link a:hover { text-decoration: underline; }
+                  .deployment { background: white; padding: 1.5rem; margin: 1rem 0; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border-left: 4px solid #fd7e14; }
+                  .deployment h3 { margin: 0 0 0.5rem 0; color: #333; }
+                  .deployment p { color: #666; margin: 0.5rem 0 1rem 0; }
+                  .deployment a { color: #0366d6; text-decoration: none; font-weight: 500; }
+                  .deployment a:hover { text-decoration: underline; }
+                  .new-deployment { border-left-color: #28a745; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <div class="back-link">
+                      <a href="../">← Back to Deployments Hub</a>
+                  </div>
+                  
+                  <div class="header">
+                      <h1>🚀 Feature Branch Storybooks</h1>
+                      <p>Development versions from feature branches</p>
+                  </div>
+                  
+                  <div id="feature-list">
+                      <!-- Feature branches will be dynamically loaded here -->
+                  </div>
+              </div>
+              
+              <script>
+                  // Dynamically discover and list feature branches
+                  async function loadFeatureBranches() {
+                      const container = document.getElementById('feature-list');
+                      const branches = [];
+                      
+                      // Try to discover subdirectories (this is a simple approach)
+                      // In a real scenario, you might want to maintain a manifest file
+                      
+                      // For now, we'll show a placeholder and let users navigate directly
+                      container.innerHTML = `
+                          <div class="deployment">
+                              <h3>Browse Feature Branches</h3>
+                              <p>Feature branches are deployed to subdirectories here. Navigate directly to:</p>
+                              <ul style="color: #666; margin: 1rem 0;">
+                                  <li><code>/feature-branches/{branch-name}/</code> for specific branches</li>
+                              </ul>
+                              <p style="font-size: 0.9rem; color: #888;">
+                                  Replace <code>{branch-name}</code> with the cleaned branch name (e.g., feat-new-feature)
+                              </p>
+                          </div>
+                      `;
+                  }
+                  
+                  loadFeatureBranches();
+              </script>
+          </body>
+          </html>
+          EOF
+            
+            # Replace placeholders
+            sed -i "s/BRANCH_NAME_PLACEHOLDER/$BRANCH_NAME/g" deployment/index.html
+            sed -i "s/CLEAN_BRANCH_PLACEHOLDER/$CLEAN_BRANCH/g" deployment/index.html
+          fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: storybook-static
-          enable_jekyll: false
+          path: './deployment'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
 
       - name: Get deployment URL
         id: get-url
         run: |
           BRANCH_NAME="${{ needs.check-stories.outputs.branch-name }}"
-          BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
-          echo "page-url=${BASE_URL}/" >> $GITHUB_OUTPUT
-          echo "Deployed Storybook from branch $BRANCH_NAME to: ${BASE_URL}/"
+          BASE_URL="${{ steps.deployment.outputs.page_url }}"
+          
+          if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "trunk" ]]; then
+            echo "page-url=${BASE_URL}" >> $GITHUB_OUTPUT
+            echo "hub-url=${BASE_URL}" >> $GITHUB_OUTPUT
+            echo "Deployed main Storybook to: ${BASE_URL}"
+          else
+            CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+            echo "page-url=${BASE_URL}feature-branches/${CLEAN_BRANCH}/" >> $GITHUB_OUTPUT
+            echo "hub-url=${BASE_URL}" >> $GITHUB_OUTPUT
+            echo "Deployed feature branch to: ${BASE_URL}feature-branches/${CLEAN_BRANCH}/"
+          fi
 
       - name: Comment PR with deployment URL
         if: github.event_name == 'pull_request'
@@ -111,19 +340,17 @@ jobs:
         with:
           script: |
             const deploymentUrl = '${{ steps.get-url.outputs.page-url }}';
+            const hubUrl = '${{ steps.get-url.outputs.hub-url }}';
             const branchName = '${{ needs.check-stories.outputs.branch-name }}';
             
             const comment = `## 🎨 Storybook Deployment Ready!
             
-            Your Storybook has been deployed and is available at:
+            Your feature branch Storybook has been deployed!
             
             **🔗 [View Storybook for \`${branchName}\`](${deploymentUrl})**
             
-            This deployment will be automatically updated when you push new commits to this branch.`;
+            **🏠 [View All Deployments Hub](${hubUrl})**
             
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
+            This deployment will be automatically updated when you push new commits to this branch.
+            
+            ---

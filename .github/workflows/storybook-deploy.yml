@@ -10,8 +10,14 @@ on:
   pull_request:
     paths:
       - 'src/**'
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, closed]
+  delete:  # Trigger when branches are deleted
   workflow_dispatch:
+    inputs:
+      cleanup_branch:
+        description: 'Branch name to cleanup (leave empty for normal deployment)'
+        required: false
+        type: string
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
@@ -28,6 +34,7 @@ concurrency:
 jobs:
   # Check if we should build Storybook (has stories)
   check-stories:
+    if: github.event_name != 'delete'
     runs-on: ubuntu-latest
     outputs:
       has-stories: ${{ steps.check.outputs.has-stories }}
@@ -59,7 +66,7 @@ jobs:
   # Build and deploy job
   build-and-deploy:
     needs: check-stories
-    if: needs.check-stories.outputs.has-stories == 'true'
+    if: needs.check-stories.outputs.has-stories == 'true' && github.event_name != 'delete'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -87,7 +94,11 @@ jobs:
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
-
+      - name: Add .nojekyll to prevent Jekyll processing
+        run: |
+          touch storybook-static/.nojekyll
+          echo "Added .nojekyll file to storybook-static"
+          ls -la storybook-static/ | head -5
           
       - name: Determine destination directory
         id: dest-dir
@@ -103,25 +114,299 @@ jobs:
             echo "Deploying feature branch to feature-branches/$CLEAN_BRANCH"
           fi
           
-      - name: Deploy to GitHub Pages  
-        uses: peaceiris/actions-gh-pages@v3
+      - name: Download existing GitHub Pages artifact (if exists)
+        continue-on-error: true
+        run: |
+          # Try to download the current site content
+          mkdir -p existing-site
+          # This is a simplified approach - in practice you might want to fetch from gh-pages branch
+          echo "Setting up deployment structure..."
+          
+      - name: Prepare deployment directory
+        run: |
+          # Create deployment structure
+          mkdir -p deployment
+          
+          # Try to restore existing content from gh-pages branch if it exists
+          if git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            echo "Found existing gh-pages branch, fetching content..."
+            git fetch origin gh-pages
+            git checkout gh-pages
+            # Copy existing content to deployment directory
+            cp -r * deployment/ 2>/dev/null || echo "No existing content to preserve"
+            git checkout ${{ github.ref_name }}
+          fi
+          
+          # Determine deployment path
+          BRANCH_NAME="${{ needs.check-stories.outputs.branch-name }}"
+          CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+          
+          if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "trunk" ]]; then
+            # Main branch: preserve feature-branches but update root
+            if [ -d "deployment/feature-branches" ]; then
+              echo "Preserving existing feature-branches directory"
+              mv deployment/feature-branches /tmp/feature-branches-backup
+            fi
+            # Clear root files but not directories
+            find deployment -maxdepth 1 -type f -delete 2>/dev/null || true
+            # Copy new main storybook to root
+            cp -r storybook-static/* deployment/
+            # Restore feature-branches
+            if [ -d "/tmp/feature-branches-backup" ]; then
+              mv /tmp/feature-branches-backup deployment/feature-branches
+            fi
+            echo "Deployed main branch to root, preserved feature-branches/"
+          else
+            # Feature branch: add to feature-branches directory
+            echo "Processing feature branch: $BRANCH_NAME -> $CLEAN_BRANCH"
+            mkdir -p "deployment/feature-branches/$CLEAN_BRANCH"
+            cp -r storybook-static/* "deployment/feature-branches/$CLEAN_BRANCH/"
+            echo "Deployed feature branch to feature-branches/$CLEAN_BRANCH/"
+          fi
+          
+          # Add .nojekyll to prevent Jekyll processing
+          touch deployment/.nojekyll
+          
+          # Debug: Show final structure
+          echo "Final deployment structure:"
+          find deployment -type f | head -10
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./storybook-static
-          destination_dir: ${{ steps.dest-dir.outputs.destination }}
-          keep_files: true
-          enable_jekyll: false
+          path: ./deployment
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
 
       - name: Get deployment URL
         id: get-url  
         run: |
-          BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
-          DEST="${{ steps.dest-dir.outputs.destination }}"
+          BRANCH_NAME="${{ needs.check-stories.outputs.branch-name }}"
+          CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+          BASE_URL="${{ steps.deployment.outputs.page_url }}"
           
-          if [[ "$DEST" == "." ]]; then
-            echo "page-url=${BASE_URL}/" >> $GITHUB_OUTPUT
-            echo "Deployed main Storybook to: ${BASE_URL}/"
+          if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "trunk" ]]; then
+            echo "page-url=${BASE_URL}" >> $GITHUB_OUTPUT
+            echo "Deployed main Storybook to: ${BASE_URL}"
           else
-            echo "page-url=${BASE_URL}/${DEST}/" >> $GITHUB_OUTPUT  
-            echo "Deployed feature branch to: ${BASE_URL}/${DEST}/"
+            echo "page-url=${BASE_URL}feature-branches/${CLEAN_BRANCH}/" >> $GITHUB_OUTPUT  
+            echo "Deployed feature branch to: ${BASE_URL}feature-branches/${CLEAN_BRANCH}/"
           fi
+
+  # Manual cleanup job (can be triggered via workflow_dispatch)
+  manual-cleanup:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.cleanup_branch != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Manual cleanup of specified branch
+        run: |
+          # Get the branch name from manual input
+          DELETED_BRANCH="${{ github.event.inputs.cleanup_branch }}"
+          CLEAN_BRANCH=$(echo "$DELETED_BRANCH" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+          
+          echo "🧹 Manual cleanup requested for branch: '$DELETED_BRANCH'"
+          echo "🗑️ Cleaning up deployment for: feature-branches/$CLEAN_BRANCH"
+          
+          # Download current site from gh-pages branch
+          mkdir -p deployment
+          
+          if git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            echo "📥 Fetching current site content..."
+            git fetch origin gh-pages
+            git checkout gh-pages
+            
+            # Check if the feature branch folder exists
+            if [ -d "feature-branches/$CLEAN_BRANCH" ]; then
+              echo "✅ Found feature-branches/$CLEAN_BRANCH - removing it"
+              # Copy everything except the deleted branch folder
+              cp -r * deployment/ 2>/dev/null || echo "No content to preserve"
+              rm -rf "deployment/feature-branches/$CLEAN_BRANCH"
+              echo "🗑️ Removed feature-branches/$CLEAN_BRANCH"
+              
+              # Show what's left
+              echo "📁 Remaining feature branches:"
+              ls -la deployment/feature-branches/ 2>/dev/null || echo "No feature branches left"
+            else
+              echo "ℹ️ No deployment found for $CLEAN_BRANCH (already cleaned up or never existed)"
+              cp -r * deployment/ 2>/dev/null || echo "No content to preserve"
+            fi
+            
+            git checkout master
+          else
+            echo "⚠️ No gh-pages branch found - nothing to clean up"
+            exit 0
+          fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./deployment
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Manual cleanup complete
+        run: |
+          echo "🎉 Manual cleanup complete! Removed deployment for branch: ${{ github.event.inputs.cleanup_branch }}"
+          echo "🌐 Updated site: ${{ steps.deployment.outputs.page_url }}"
+
+  # Cleanup job when PR is merged
+  cleanup-on-merge:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cleanup merged branch deployment
+        run: |
+          # Get the merged branch name
+          MERGED_BRANCH="${{ github.event.pull_request.head.ref }}"
+          CLEAN_BRANCH=$(echo "$MERGED_BRANCH" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+          
+          echo "🎉 PR merged! Branch '$MERGED_BRANCH' was merged into ${{ github.event.pull_request.base.ref }}"
+          echo "🧹 Cleaning up deployment for: feature-branches/$CLEAN_BRANCH"
+          
+          # Download current site from gh-pages branch
+          mkdir -p deployment
+          
+          if git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            echo "📥 Fetching current site content..."
+            git fetch origin gh-pages
+            git checkout gh-pages
+            
+            # Check if the feature branch folder exists
+            if [ -d "feature-branches/$CLEAN_BRANCH" ]; then
+              echo "✅ Found feature-branches/$CLEAN_BRANCH - removing it (branch was merged)"
+              # Copy everything except the merged branch folder
+              cp -r * deployment/ 2>/dev/null || echo "No content to preserve"
+              rm -rf "deployment/feature-branches/$CLEAN_BRANCH"
+              echo "🗑️ Removed feature-branches/$CLEAN_BRANCH"
+              
+              # Show what's left
+              echo "📁 Remaining feature branches:"
+              ls -la deployment/feature-branches/ 2>/dev/null || echo "No feature branches left"
+            else
+              echo "ℹ️ No deployment found for $CLEAN_BRANCH (already cleaned up or never deployed)"
+              cp -r * deployment/ 2>/dev/null || echo "No content to preserve"
+            fi
+            
+            git checkout master
+          else
+            echo "⚠️ No gh-pages branch found - nothing to clean up"
+            exit 0
+          fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./deployment
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Merge cleanup complete
+        run: |
+          echo "🎉 Merge cleanup complete! Removed deployment for merged branch: ${{ github.event.pull_request.head.ref }}"
+          echo "🌐 Updated site: ${{ steps.deployment.outputs.page_url }}"
+          echo "💡 The feature is now part of the main deployment!"
+
+  # Cleanup job for deleted branches (automatic)
+  cleanup-deleted-branch:
+    if: github.event_name == 'delete' && github.event.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master  # Checkout master since the deleted branch won't exist
+
+      - name: Setup Node.js (for any dependencies if needed)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Clean up deleted branch deployment
+        run: |
+          # Get the deleted branch name from the GitHub event
+          DELETED_BRANCH="${{ github.event.ref }}"
+          CLEAN_BRANCH=$(echo "$DELETED_BRANCH" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+          
+          echo "🗑️ Branch '$DELETED_BRANCH' was deleted"
+          echo "🧹 Cleaning up deployment for: feature-branches/$CLEAN_BRANCH"
+          
+          # Download current site from gh-pages branch
+          mkdir -p deployment
+          
+          if git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            echo "📥 Fetching current site content..."
+            git fetch origin gh-pages
+            git checkout gh-pages
+            
+            # Check if the feature branch folder exists
+            if [ -d "feature-branches/$CLEAN_BRANCH" ]; then
+              echo "✅ Found feature-branches/$CLEAN_BRANCH - removing it"
+              # Copy everything except the deleted branch folder
+              cp -r * deployment/ 2>/dev/null || echo "No content to preserve"
+              rm -rf "deployment/feature-branches/$CLEAN_BRANCH"
+              echo "🗑️ Removed feature-branches/$CLEAN_BRANCH"
+              
+              # Show what's left
+              echo "📁 Remaining feature branches:"
+              ls -la deployment/feature-branches/ 2>/dev/null || echo "No feature branches left"
+            else
+              echo "ℹ️ No deployment found for $CLEAN_BRANCH (already cleaned up or never existed)"
+              cp -r * deployment/ 2>/dev/null || echo "No content to preserve"
+            fi
+            
+            git checkout master
+          else
+            echo "⚠️ No gh-pages branch found - nothing to clean up"
+            exit 0
+          fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./deployment
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Cleanup complete
+        run: |
+          echo "🎉 Cleanup complete! Removed deployment for deleted branch: ${{ github.event.ref }}"

@@ -87,77 +87,41 @@ jobs:
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
-      - name: Download existing GitHub Pages (if exists)
-        continue-on-error: true
-        run: |
-          # Try to download the current gh-pages branch content
-          git fetch origin gh-pages:gh-pages 2>/dev/null || echo "No existing gh-pages branch found"
-          if git show-ref --verify --quiet refs/heads/gh-pages; then
-            echo "Found existing gh-pages branch, checking out content..."
-            git checkout gh-pages -- . 2>/dev/null || echo "Could not checkout gh-pages content"
-            # Move existing content to preserve it
-            mkdir -p /tmp/existing-site
-            cp -r * /tmp/existing-site/ 2>/dev/null || echo "No existing content to preserve"
-            git checkout ${{ github.ref_name }}
-          fi
 
-      - name: Prepare deployment directory
+          
+      - name: Determine destination directory
+        id: dest-dir
         run: |
-          # Create deployment structure
-          mkdir -p deployment
-          
-          # Restore existing content if it was preserved
-          if [ -d "/tmp/existing-site" ]; then
-            echo "Restoring existing site content..."
-            cp -r /tmp/existing-site/* deployment/ 2>/dev/null || echo "No content to restore"
-          fi
-          
-          # Determine deployment path
           BRANCH_NAME="${{ needs.check-stories.outputs.branch-name }}"
+          CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
           
           if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "trunk" ]]; then
-            # Main branch: preserve feature-branches but update root
-            if [ -d "deployment/feature-branches" ]; then
-              echo "Preserving existing feature-branches directory"
-              mv deployment/feature-branches /tmp/feature-branches-backup
-            fi
-            # Clear root files but not directories
-            find deployment -maxdepth 1 -type f -delete 2>/dev/null || true
-            # Copy new main storybook to root
-            cp -r storybook-static/* deployment/
-            # Restore feature-branches
-            if [ -d "/tmp/feature-branches-backup" ]; then
-              mv /tmp/feature-branches-backup deployment/feature-branches
-            fi
-            echo "Deployed main branch to root, preserved feature-branches/"
+            echo "destination=." >> $GITHUB_OUTPUT
+            echo "Deploying main branch to root"
           else
-            # Feature branch: add to feature-branches directory
-            CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
-            mkdir -p "deployment/feature-branches/$CLEAN_BRANCH"
-            cp -r storybook-static/* "deployment/feature-branches/$CLEAN_BRANCH/"
-            echo "Deployed feature branch to feature-branches/$CLEAN_BRANCH/"
+            echo "destination=feature-branches/$CLEAN_BRANCH" >> $GITHUB_OUTPUT
+            echo "Deploying feature branch to feature-branches/$CLEAN_BRANCH"
           fi
-      - name: Deploy to GitHub Pages
+          
+      - name: Deploy to GitHub Pages  
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./deployment
+          publish_dir: ./storybook-static
+          destination_dir: ${{ steps.dest-dir.outputs.destination }}
           keep_files: true
           enable_jekyll: false
 
       - name: Get deployment URL
-        id: get-url
+        id: get-url  
         run: |
-          BRANCH_NAME="${{ needs.check-stories.outputs.branch-name }}"
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
+          DEST="${{ steps.dest-dir.outputs.destination }}"
           
-          if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "trunk" ]]; then
+          if [[ "$DEST" == "." ]]; then
             echo "page-url=${BASE_URL}/" >> $GITHUB_OUTPUT
-            echo "hub-url=${BASE_URL}/" >> $GITHUB_OUTPUT
             echo "Deployed main Storybook to: ${BASE_URL}/"
           else
-            CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
-            echo "page-url=${BASE_URL}/feature-branches/${CLEAN_BRANCH}/" >> $GITHUB_OUTPUT
-            echo "hub-url=${BASE_URL}/" >> $GITHUB_OUTPUT
-            echo "Deployed feature branch to: ${BASE_URL}/feature-branches/${CLEAN_BRANCH}/"
+            echo "page-url=${BASE_URL}/${DEST}/" >> $GITHUB_OUTPUT  
+            echo "Deployed feature branch to: ${BASE_URL}/${DEST}/"
           fi

@@ -35,20 +35,20 @@ export const Primary: Story = {
 
 export const Secondary: Story = {
   args: {
-    label: 'Button Master',
+    label: 'Button Feat-7',
   },
 };
 
 export const Large: Story = {
   args: {
     size: 'large',
-    label: 'Button Master',
+    label: 'Button Feat-7',
   },
 };
 
 export const Small: Story = {
   args: {
     size: 'small',
-    label: 'Button Master',
+    label: 'Button Feat-7',
   },
 };

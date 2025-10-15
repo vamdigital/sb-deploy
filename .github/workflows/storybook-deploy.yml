@@ -143,19 +143,39 @@ jobs:
           
           if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "trunk" ]]; then
             # Main branch: preserve feature-branches but update root
+            echo "📂 Contents of deployment before main branch processing:"
+            ls -la deployment/ || echo "Deployment directory empty"
+            
             if [ -d "deployment/feature-branches" ]; then
-              echo "Preserving existing feature-branches directory"
+              echo "✅ Preserving existing feature-branches directory"
+              echo "📁 Current feature branches:"
+              ls -la deployment/feature-branches/ || echo "feature-branches empty"
               mv deployment/feature-branches /tmp/feature-branches-backup
+              echo "📦 Backed up feature-branches to /tmp/"
+            else
+              echo "⚠️ No existing feature-branches directory found"
             fi
+            
             # Clear root files but not directories
+            echo "🧹 Clearing root files (preserving directories)"
             find deployment -maxdepth 1 -type f -delete 2>/dev/null || true
+            
             # Copy new main storybook to root
+            echo "📋 Copying main storybook to root"
             cp -r storybook-static/* deployment/
+            
             # Restore feature-branches
             if [ -d "/tmp/feature-branches-backup" ]; then
+              echo "🔄 Restoring feature-branches from backup"
               mv /tmp/feature-branches-backup deployment/feature-branches
+              echo "✅ Restored feature-branches directory"
+              echo "📁 Final feature branches:"
+              ls -la deployment/feature-branches/ || echo "feature-branches restored but empty"
+            else
+              echo "ℹ️ No feature-branches backup to restore"
             fi
-            echo "Deployed main branch to root, preserved feature-branches/"
+            
+            echo "🎉 Deployed main branch to root, preserved feature-branches/"
           else
             # Feature branch: add to feature-branches directory
             echo "Processing feature branch: $BRANCH_NAME -> $CLEAN_BRANCH"
